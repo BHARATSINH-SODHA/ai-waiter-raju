@@ -3,3 +3,4 @@ gunicorn
 pymongo
 dnspython
 google-generativeai>=0.8.0
+requests
