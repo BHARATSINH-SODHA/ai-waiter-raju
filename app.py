@@ -1,55 +1,72 @@
 import os
-import requests
 from flask import Flask, request, jsonify
-from dotenv import load_dotenv
-
-load_dotenv()
+import google.generativeai as genai
+import pymongo
 
 app = Flask(__name__)
+
+# --- 1. CONFIGURATION (Chabiyan) ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+MONGO_URI = os.getenv("MONGO_URI")
 
-def ask_gemini(message):
-    if not GEMINI_API_KEY:
-        return "Error: API Key nahi mili!"
+# --- 2. CONNECT TO SERVICES ---
+# Gemini Setup
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-1.5-flash')
 
-    # CHANGE: Humne model ka naam 'gemini-1.5-flash' se badal kar 'gemini-pro' kar diya hai
-    # Ye purana model hai par kabhi fail nahi hota.
-       
-    # UPDATE: Hum 'gemini-1.5-flash' use kar rahe hain jo free tier mein sabse stable hai
-        # UPDATE: Ye naam aapke screenshot mein saaf dikh raha hai
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={GEMINI_API_KEY}"
+# MongoDB Setup
+try:
+    client = pymongo.MongoClient(MONGO_URI)
+    db = client.get_database("ai_waiter_db")
+    clients_collection = db.clients
+    print("✅ Database Connected!")
+except Exception as e:
+    print(f"❌ Database Error: {e}")
 
-    
-    headers = {"Content-Type": "application/json"}
-    data = {
-        "contents": [{
-            "parts": [{
-                "text": f"You are a helpful waiter named Raju. Keep answers short. Customer asks: {message}"
-            }]
-        }]
-    }
-    
-    try:
-        response = requests.post(url, json=data, headers=headers)
-        
-        if response.status_code != 200:
-            return f"Google Error: {response.text}"
-            
-        return response.json()["candidates"][0]["content"]["parts"][0]["text"]
-        
-    except Exception as e:
-        return f"Connection Error: {str(e)}"
-
-@app.route("/")
-def home():
-    return "🚀 AI Waiter is Running (Stable Mode)!"
-
-@app.route("/chat")
+# --- 3. THE BRAIN (Dynamic Route) ---
+@app.route('/chat', methods=['GET'])
 def chat():
-    user_msg = request.args.get("msg", "Hello")
-    reply = ask_gemini(user_msg)
-    return jsonify({"User": user_msg, "AI_Raju": reply})
+    user_message = request.args.get('msg')
+    
+    # Filhal hum default Client ID "1001" use karenge (Jo humne abhi banaya)
+    # Baad mein ye WhatsApp number se automatic aayega
+    client_id = request.args.get('client_id', '1001')
 
-if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    if not user_message:
+        return jsonify({"error": "Message is required"}), 400
+
+    try:
+        # A. Database se Client ki Kundli nikalo
+        client_data = clients_collection.find_one({"client_id": client_id})
+
+        if not client_data:
+            return jsonify({"AI_Response": "Error: Ye Client ID register mein nahi mili."})
+
+        # B. Prompt nikalo (Example: "You are Raju Manager...")
+        bot_instruction = client_data['ai_config']['system_instruction']
+        bot_name = client_data['ai_config']['bot_name']
+
+        # C. Gemini ko instruction do (System Prompt)
+        # Hum naye chat session mein system instruction bhejte hain
+        chat_session = model.start_chat(
+            history=[
+                {"role": "user", "parts": [f"System Instruction: {bot_instruction}"]},
+                {"role": "model", "parts": ["Understood. I will act according to this instruction."]},
+            ]
+        )
+        
+        # D. Jawab mango
+        response = chat_session.send_message(user_message)
+        
+        return jsonify({
+            "Bot_Name": bot_name,
+            "User": user_message,
+            "AI_Response": response.text.strip()
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=10000)
 
