@@ -12,7 +12,7 @@ MONGO_URI = os.getenv("MONGO_URI")
 # --- 2. CONNECT TO SERVICES ---
 # Gemini Setup
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-2.0-flash')
+model = genai.GenerativeModel('gemini-1.5-flash')
 
 
 
